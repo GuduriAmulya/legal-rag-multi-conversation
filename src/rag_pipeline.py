@@ -123,8 +123,11 @@ class RAGPipeline:
         if not self.is_initialized:
             return "The system is not initialized. Please check if documents are loaded."
         
-        # STEP 1: Get conversation history from memory (no embedding needed)
-        conversation_context = self.conversation_manager.get_conversation_context(session_id)
+        # STEP 1: Get conversation history with summarization support
+        conversation_context = self.conversation_manager.get_conversation_context(
+            session_id, 
+            groq_client=self.groq_client  # Pass Groq client for summarization
+        )
         
         # STEP 2: Create embedding for current query & search vector DB
         context = self.retrieve_context(query)  # This creates embeddings and searches
@@ -144,6 +147,15 @@ class RAGPipeline:
     def get_sessions(self) -> List[str]:
         """Get list of active sessions."""
         return self.conversation_manager.list_sessions()
+    
+    def get_session_info(self, session_id: str) -> dict:
+        """Get session information including token usage."""
+        session_info = self.conversation_manager.get_session_info(session_id)
+        token_info = self.conversation_manager.get_token_info(session_id)
+        
+        # Combine both info dictionaries
+        combined_info = {**session_info, **token_info}
+        return combined_info
     
     def delete_session(self, session_id: str):
         """Delete a conversation session."""
