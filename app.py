@@ -52,26 +52,81 @@ with st.sidebar:
             st.success(f"Created new session: {session_id[:8]}...")
             st.rerun()
         
-        # Display current session
+        # Get all sessions and display current session info
+        sessions = st.session_state.rag_pipeline.get_sessions()
+        
+        # Display current session info with token usage
         if st.session_state.current_session:
-            st.write(f"**Current Session:** {st.session_state.current_session[:8]}...")
-            
-            if st.button("🗑️ Delete Current Session"):
-                st.session_state.rag_pipeline.delete_session(st.session_state.current_session)
+            # Check if current session still exists in the list
+            if st.session_state.current_session not in sessions:
+                st.warning("Current session no longer exists. Please select a new session.")
                 st.session_state.current_session = None
-                st.success("Session deleted!")
-                st.rerun()
+            else:
+                session_info = st.session_state.rag_pipeline.get_session_info(
+                    st.session_state.current_session
+                )
+                
+                st.write(f"**Current Session:** {st.session_state.current_session[:8]}...")
+                
+                # Token usage in sidebar
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Tokens", session_info.get("total_context_tokens", 0))
+                with col2:
+                    st.metric("Messages", session_info.get("total_conversations", 0))
+                
+                # Progress bar
+                progress_value = min(session_info.get("token_usage_percentage", 0) / 100, 1.0)
+                st.progress(progress_value)
+                
+                if session_info.get("approaching_limit", False):
+                    st.warning("⚠️ Near token limit!")
+                
+                if session_info.get("has_summary", False):
+                    st.info("📋 Has summary")
+                
+                if st.button("🗑️ Delete Current Session"):
+                    st.session_state.rag_pipeline.delete_session(st.session_state.current_session)
+                    st.session_state.current_session = None
+                    st.success("Session deleted!")
+                    st.rerun()
         
         # List all sessions
-        sessions = st.session_state.rag_pipeline.get_sessions()
         if sessions:
             st.write("**Active Sessions:**")
+            st.write(f"Total sessions found: {len(sessions)}")
+            
             for session in sessions:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    if st.button(f"📄 {session[:8]}...", key=f"session_{session}"):
-                        st.session_state.current_session = session
-                        st.rerun()
+                try:
+                    session_info = st.session_state.rag_pipeline.get_session_info(session)
+                    
+                    # Create a more informative button label
+                    summary_indicator = "📋" if session_info.get("has_summary", False) else "📄"
+                    total_msgs = session_info.get("total_conversations", 0)
+                    last_activity = session_info.get("last_activity")
+                    
+                    # Format last activity
+                    if last_activity:
+                        time_str = last_activity.strftime("%m/%d %H:%M")
+                    else:
+                        time_str = "No activity"
+                    
+                    button_label = f"{summary_indicator} {session[:8]}... ({total_msgs} msgs) - {time_str}"
+                    
+                    # Check if this is the current session
+                    is_current = session == st.session_state.current_session
+                    
+                    if is_current:
+                        st.info(f"🔸 CURRENT: {button_label}")
+                    else:
+                        if st.button(button_label, key=f"session_{session}"):
+                            st.session_state.current_session = session
+                            st.rerun()
+                            
+                except Exception as e:
+                    st.error(f"Error loading session {session[:8]}: {str(e)}")
+        else:
+            st.info("No previous sessions found. Create a new session to start chatting!")
 
 # Main chat interface
 st.title("⚖️ Legal RAG Chatbot")
@@ -116,8 +171,44 @@ else:
             # Get retrieved context for debugging
             retrieved_context = st.session_state.rag_pipeline.retrieve_context(prompt)
             
+            # Get token usage information
+            token_info = st.session_state.rag_pipeline.conversation_manager.get_token_info(
+                st.session_state.current_session
+            )
+            
             # Show debug information in expandable sections
             with st.expander("🔍 Debug Information", expanded=False):
+                # Token Usage Section
+                st.subheader("📊 Token Usage:")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric(
+                        "Total Context Tokens", 
+                        token_info.get("total_context_tokens", 0),
+                        delta=f"{token_info.get('token_usage_percentage', 0):.1f}% of limit"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "Summary Tokens", 
+                        token_info.get("summary_tokens", 0)
+                    )
+                
+                with col3:
+                    st.metric(
+                        "Recent Conv Tokens", 
+                        token_info.get("recent_conversation_tokens", 0)
+                    )
+                
+                # Warning if approaching limit
+                if token_info.get("approaching_limit", False):
+                    st.warning("⚠️ Approaching token limit - summarization may trigger soon!")
+                
+                # Progress bar for token usage
+                progress_value = min(token_info.get("token_usage_percentage", 0) / 100, 1.0)
+                st.progress(progress_value, text=f"Token Usage: {token_info.get('total_context_tokens', 0)}/{token_info.get('max_tokens', 2000)}")
+                
                 st.subheader("Retrieved Context:")
                 st.text_area("Context sent to LLM:", retrieved_context, height=150, disabled=True)
                 
@@ -139,4 +230,4 @@ Keep your responses professional and helpful."""
 
 # Footer
 st.markdown("---")
-st.markdown("💡 **Tip:** This chatbot maintains conversation context for up to 3 previous exchanges per session.")
+st.markdown("💡 **Tip:** Token usage is tracked in real-time. Summarization triggers at 2000+ tokens to optimize performance.")
