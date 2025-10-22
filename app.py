@@ -161,7 +161,7 @@ else:
             with st.chat_message("user"):
                 st.write(prompt)
         
-        # Generate and display response with debug info
+        # Generate and display response with optional evaluation
         with st.spinner("Thinking..."):
             # Get conversation context for debugging
             conversation_context = st.session_state.rag_pipeline.conversation_manager.get_conversation_context(
@@ -178,36 +178,65 @@ else:
             
             # Show debug information in expandable sections
             with st.expander("🔍 Debug Information", expanded=False):
-                # Token Usage Section
-                st.subheader("📊 Token Usage:")
-                col1, col2, col3 = st.columns(3)
+                # Add document retrieval debugging
+                # st.subheader("🔍 Document Retrieval Debug:")
                 
-                with col1:
-                    st.metric(
-                        "Total Context Tokens", 
-                        token_info.get("total_context_tokens", 0),
-                        delta=f"{token_info.get('token_usage_percentage', 0):.1f}% of limit"
-                    )
+                # # Check if vector store is loaded
+                # vector_store_status = st.session_state.rag_pipeline.is_initialized
+                # st.write(f"Vector Store Initialized: {vector_store_status}")
                 
-                with col2:
-                    st.metric(
-                        "Summary Tokens", 
-                        token_info.get("summary_tokens", 0)
-                    )
+                # if vector_store_status:
+                #     # Check number of documents in vector store
+                #     num_docs = len(st.session_state.rag_pipeline.vector_store.documents)
+                #     st.write(f"Total Documents in Vector Store: {num_docs}")
+                    
+                #     # Show sample document chunks
+                #     if num_docs > 0:
+                #         st.write("**Sample Document Chunks (first 3):**")
+                #         for i, doc in enumerate(st.session_state.rag_pipeline.vector_store.documents[:3]):
+                #             st.text_area(f"Chunk {i+1}:", doc[:200] + "..." if len(doc) > 200 else doc, height=80, key=f"chunk_{i}")
+                    
+                #     # Test search with current query
+                #     st.write(f"**Search Results for: '{prompt}'**")
+                #     search_results = st.session_state.rag_pipeline.vector_store.search(prompt, k=5)
                 
-                with col3:
-                    st.metric(
-                        "Recent Conv Tokens", 
-                        token_info.get("recent_conversation_tokens", 0)
-                    )
+                #     if search_results:
+                #         for i, (doc, score) in enumerate(search_results):
+                #             st.write(f"Result {i+1} (Score: {score:.3f}):")
+                #             st.text_area(f"Content {i+1}:", doc[:300] + "..." if len(doc) > 300 else doc, height=80, key=f"result_{i}")
+                #     else:
+                #         st.error("No search results found!")
                 
-                # Warning if approaching limit
-                if token_info.get("approaching_limit", False):
-                    st.warning("⚠️ Approaching token limit - summarization may trigger soon!")
+                # # Token Usage Section
+                # st.subheader("📊 Token Usage:")
+                # col1, col2, col3 = st.columns(3)
                 
-                # Progress bar for token usage
-                progress_value = min(token_info.get("token_usage_percentage", 0) / 100, 1.0)
-                st.progress(progress_value, text=f"Token Usage: {token_info.get('total_context_tokens', 0)}/{token_info.get('max_tokens', 2000)}")
+                # with col1:
+                #     st.metric(
+                #         "Total Context Tokens", 
+                #         token_info.get("total_context_tokens", 0),
+                #         delta=f"{token_info.get('token_usage_percentage', 0):.1f}% of limit"
+                #     )
+                
+                # with col2:
+                #     st.metric(
+                #         "Summary Tokens", 
+                #         token_info.get("summary_tokens", 0)
+                #     )
+                
+                # with col3:
+                #     st.metric(
+                #         "Recent Conv Tokens", 
+                #         token_info.get("recent_conversation_tokens", 0)
+                #     )
+                
+                # # Warning if approaching limit
+                # if token_info.get("approaching_limit", False):
+                #     st.warning("⚠️ Approaching token limit - summarization may trigger soon!")
+                
+                # # Progress bar for token usage
+                # progress_value = min(token_info.get("token_usage_percentage", 0) / 100, 1.0)
+                # st.progress(progress_value, text=f"Token Usage: {token_info.get('total_context_tokens', 0)}/{token_info.get('max_tokens', 2000)}")
                 
                 st.subheader("Retrieved Context:")
                 st.text_area("Context sent to LLM:", retrieved_context, height=150, disabled=True)
@@ -222,12 +251,125 @@ If the context doesn't contain relevant information, say so clearly.
 Keep your responses professional and helpful."""
                 st.text_area("System prompt:", system_prompt, height=100, disabled=True)
             
-            response = st.session_state.rag_pipeline.chat(st.session_state.current_session, prompt)
+            # Use evaluation-enabled chat if enabled
+            if st.session_state.get('enable_evaluation', False):
+                response, evaluation = st.session_state.rag_pipeline.chat_with_evaluation(
+                    st.session_state.current_session, prompt, enable_evaluation=True
+                )
+            else:
+                response = st.session_state.rag_pipeline.chat(st.session_state.current_session, prompt)
+                evaluation = None
         
         with chat_container:
             with st.chat_message("assistant"):
                 st.write(response)
+                
+                # Show evaluation results if available - ALWAYS VISIBLE
+                if evaluation:
+                    st.markdown("---")
+                    st.subheader("⚖️ LLM Judge Evaluation Results")
+                    
+                    # Overall score prominently displayed
+                    col1, col2, col3 = st.columns([2, 2, 2])
+                    with col1:
+                        st.metric("📊 Overall Score", f"{evaluation.overall_score:.1f}/5.0", 
+                                help="Average of all dimension scores")
+                    with col2:
+                        # Determine performance level
+                        if evaluation.overall_score >= 4.0:
+                            performance = "🟢 Excellent"
+                        elif evaluation.overall_score >= 3.0:
+                            performance = "🟡 Good"
+                        else:
+                            performance = "🔴 Needs Improvement"
+                        st.metric("📈 Performance", performance)
+                    with col3:
+                        st.metric("🔍 Evaluated", "✅ Complete")
+                    
+                    # Detailed scores in a more visible format
+                    st.subheader("📋 Detailed Dimension Scores")
+                    score_cols = st.columns(3)
+                    
+                    dimensions = list(evaluation.scores.items())
+                    for i, (dimension, score) in enumerate(dimensions):
+                        col_idx = i % 3
+                        with score_cols[col_idx]:
+                            # Color-coded scores
+                            if score >= 4:
+                                color = "🟢"
+                            elif score >= 3:
+                                color = "🟡"
+                            else:
+                                color = "🔴"
+                            
+                            st.metric(
+                                f"{color} {dimension.replace('_', ' ').title()}", 
+                                f"{score}/5",
+                                help=evaluation.explanations.get(dimension, "No explanation")
+                            )
+                    
+                    # Expandable detailed explanations
+                    with st.expander("📝 Detailed Judge Reasoning", expanded=False):
+                        for dimension, explanation in evaluation.explanations.items():
+                            st.write(f"**{dimension.replace('_', ' ').title()}:** {explanation}")
 
 # Footer
 st.markdown("---")
 st.markdown("💡 **Tip:** Token usage is tracked in real-time. Summarization triggers at 2000+ tokens to optimize performance.")
+
+# Add evaluation dashboard in sidebar
+if st.session_state.initialized:
+        st.markdown("---")
+        st.subheader("📊 Evaluation System")
+        
+        # Toggle evaluation
+        if 'enable_evaluation' not in st.session_state:
+            st.session_state.enable_evaluation = False
+            
+        st.session_state.enable_evaluation = st.checkbox(
+            "🔍 Enable LLM-as-a-Judge Evaluation", 
+            value=st.session_state.enable_evaluation,
+            help="Automatically evaluate each response using AI judge"
+        )
+        
+        # Show evaluation analytics
+        if st.button("📈 View Analytics"):
+            analytics = st.session_state.rag_pipeline.get_evaluation_analytics()
+            if "total_evaluations" in analytics:
+                st.success(f"📊 {analytics['total_evaluations']} evaluations completed")
+                
+                # Show metrics in a nice format
+                metrics = analytics["overall_metrics"]
+                st.write("**Average Scores:**")
+                for metric, value in metrics.items():
+                    if metric != "average_score":
+                        st.write(f"• {metric.replace('_', ' ').title()}: {value}/5.0")
+                
+            else:
+                st.info(analytics["message"])
+        
+        # Show current session evaluations if available
+        if st.session_state.current_session:
+            if st.button("📋 Session Evaluations"):
+                session_evals = st.session_state.rag_pipeline.get_session_evaluation_summary(
+                    st.session_state.current_session
+                )
+                
+                if session_evals:
+                    st.write(f"**Evaluations for Current Session ({len(session_evals)}):**")
+                    for i, eval_data in enumerate(session_evals):
+                        with st.expander(f"Q{i+1}: {eval_data['query'][:50]}... (Score: {eval_data['overall_score']:.1f})"):
+                            st.write(f"**Query:** {eval_data['query']}")
+                            st.write(f"**Overall Score:** {eval_data['overall_score']:.1f}/5.0")
+                            
+                            # Show dimension scores
+                            cols = st.columns(3)
+                            scores = eval_data['scores']
+                            score_items = list(scores.items())
+                            
+                            for j, (dim, score) in enumerate(score_items):
+                                col_idx = j % 3
+                                with cols[col_idx]:
+                                    st.metric(dim.replace('_', ' ').title(), f"{score}/5")
+                else:
+                    st.info("No evaluations for this session yet")
